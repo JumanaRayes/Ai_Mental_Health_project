@@ -42,3 +42,19 @@ expected output For Example:
   "risk_level": "moderate",
   "response": "I'm really sorry you're feeling this way. I'm here to support you..."
 }
+
+
+GloVe Embeddings Setup:
+This project uses pre-trained GloVe word embeddings to improve NLP understanding and semantic representation of text.
+
+Download GloVe:
+
+GloVe is not installed via pip. It must be downloaded manually from Stanford:
+https://nlp.stanford.edu/projects/glove/
+Download:
+
+glove.6B.zip (recommended) Then extract:  glove.6B.300d.txt 
+
+Project Placement
+After downloading, place the file in:
+AIModels/gloveEmbed/glove.6B.300d.txt
