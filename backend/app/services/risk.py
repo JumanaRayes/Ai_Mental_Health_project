@@ -3,6 +3,7 @@ import pickle
 import re
 
 from textblob import TextBlob
+from AIModels.risk_detection import AttentionLayer
 
 try:
     import tensorflow as tf
@@ -17,55 +18,20 @@ except ImportError:
     tf = None
     Layer = object
 
-if TENSORFLOW_AVAILABLE:
-    # Custom Attention Layer required to load the model
-
-    @tf.keras.utils.register_keras_serializable()
-    class AttentionLayer(Layer):
-        def build(self, input_shape):
-            self.W = self.add_weight(
-                shape=(input_shape[-1], 1), initializer="random_normal", trainable=True
-            )
-
-            self.b = self.add_weight(
-                shape=(input_shape[1], 1), initializer="zeros", trainable=True
-            )
-
-        def call(self, x):
-            e = K.tanh(K.dot(x, self.W) + self.b)
-            a = K.softmax(e, axis=1)
-            output = x * a
-            return K.sum(output, axis=1)
-
-        def get_config(self):
-            return super().get_config()
-
-
-# Paths relative to backend
-# BASE_DIR = os.path.abspath(
-#   os.path.join(os.path.dirname(__file__), "..", "..")
-# )
 
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[3]
-
-MODEL_PATH = (
-    BASE_DIR
-    / "AIModels"
-    / "saved_models"
-    / "risk"
-    / "bi_gru_attention_risk_model.keras"
-)
+MODEL_PATH = BASE_DIR / "AIModels" / "saved_models" / "risk"
+# MODEL_PATH = (
+#  BASE_DIR
+# / "AIModels"
+# / "saved_models"
+# / "risk"
+# / "bi_gru_attention_risk_model.keras"
+# )
 TOKENIZER_PATH = BASE_DIR / "AIModels" / "saved_models" / "risk" / "tokenizer.pkl"
 
-# MODEL_PATH = os.path.join(
-# BASE_DIR,
-# "AIModels",
-# "saved_models",
-# "risk",
-# "bi_gru_attention_risk_model.keras"
-# )
 
 print("FILE LOCATION:", __file__)
 print("DIRNAME:", os.path.dirname(__file__))
@@ -73,27 +39,25 @@ print("BASE_DIR:", BASE_DIR)
 print("MODEL_PATH:", MODEL_PATH)
 
 
-# TOKENIZER_PATH = os.path.join(
-# BASE_DIR,
-# "AIModels",
-# "saved_models",
-#  "risk",
-#   "tokenizer.pkl"
-# )
-
 MAX_LEN = 120
+
 
 # Load Model globally
 model = None
 tokenizer = None
 if TENSORFLOW_AVAILABLE:
     try:
-        model = load_model(
-            str(MODEL_PATH), custom_objects={"AttentionLayer": AttentionLayer}
-        )
-
         with open(TOKENIZER_PATH, "rb") as f:
             tokenizer = pickle.load(f)
+
+        model = tf.keras.models.load_model(
+            str(MODEL_PATH),
+            custom_objects={"AttentionLayer": AttentionLayer},
+            compile=False,
+        )
+
+        print("Model loaded successfully.")
+
     except Exception as e:
         print(f"Warning: Could not load ML models correctly: {e}")
 else:
@@ -142,7 +106,36 @@ def predict_risk(text):
     return ("RISK" if model_pred > 0.45 else "SAFE", model_pred)
 
 
+def load_model_once():
+    global model, tokenizer
+
+    if model is not None:
+        return model
+
+    tokenizer = pickle.load(open(TOKENIZER_PATH, "rb"))
+
+    model = tf.keras.models.load_model(
+        MODEL_PATH,
+        custom_objects={"AttentionLayer": AttentionLayer},
+        compile=False,
+        safe_mode=False,
+    )
+
+    return model
+
+
 def detect_risk(text):
+    model = load_model_once()
+
+    seq = tokenizer.texts_to_sequences([text])
+    pad = pad_sequences(seq, maxlen=120, padding="post")
+
+    score = model.predict(pad, verbose=0)[0][0]
+
+    return {"type": "warning" if score > 0.45 else "safe", "score": float(score)}
+
+
+def _legacydetect_risk(text):
     # Dummy fallback if ML Model failed to load (e.g. tensorflow not installed)
     if model is None or tokenizer is None or not TENSORFLOW_AVAILABLE:
         keywords = ["suicide", "kill myself", "die"]

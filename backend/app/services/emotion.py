@@ -16,6 +16,9 @@ def get_emotion_system():
     if cascade_system is None:
         cascade_system = EmotionCascadeSystem()
         models_path = os.path.join(project_root, "AIModels", "emotion_models")
+        print("========================================" * 8)
+        print("Emotion Model path", models_path)
+        print("========================================" * 8)
         cascade_system.load_models(base_path=models_path)
     return cascade_system
 

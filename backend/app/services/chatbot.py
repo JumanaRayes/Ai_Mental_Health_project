@@ -11,10 +11,16 @@ from backend.app.db.models import alerts, chat_sessions, messages
 from backend.app.services.emotion import detect_emotion
 from backend.app.services.prompt_builder import build_prompt
 from backend.app.services.risk import detect_risk
+import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
 USE_LOCAL_MODEL = os.getenv("USE_LOCAL_MODEL", "false").lower() == "true"
+
+print(
+    "USE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODEL",
+    USE_LOCAL_MODEL,
+)
 
 local_chatbot_instance = None
 
@@ -22,6 +28,7 @@ local_chatbot_instance = None
 # --------------------------------------------------
 # GPT FALLBACK
 # --------------------------------------------------
+
 
 async def get_gpt_response(prompt: str) -> str:
     return "I'm here for you. Tell me more."
@@ -31,15 +38,14 @@ async def get_gpt_response(prompt: str) -> str:
 # LOAD LOCAL MODEL ONCE
 # --------------------------------------------------
 
+
 def load_local_model():
     global local_chatbot_instance
 
     if local_chatbot_instance:
         return local_chatbot_instance
 
-    project_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../")
-    )
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 
     if project_root not in sys.path:
         sys.path.append(project_root)
@@ -57,10 +63,13 @@ def load_local_model():
 # GENERATE REPLY
 # --------------------------------------------------
 
-async def generate_reply(prompt: str):
 
+async def generate_reply(prompt: str):
+    USE_LOCAL_MODEL = True
     try:
         if USE_LOCAL_MODEL:
+            print("::::::::::::::::::::::::::::::::::::::::::::::")
+            print(USE_LOCAL_MODEL)
             model = load_local_model()
             return model.generate_response(prompt)
 
@@ -75,6 +84,7 @@ async def generate_reply(prompt: str):
 # GET OR CREATE SESSION
 # --------------------------------------------------
 
+
 def get_or_create_session(user_id: int, db, first_message=None):
 
     result = db.execute(
@@ -88,10 +98,7 @@ def get_or_create_session(user_id: int, db, first_message=None):
 
     inserted = db.execute(
         insert(chat_sessions)
-        .values(
-            user_id=user_id,
-            title=title
-        )
+        .values(user_id=user_id, title=title)
         .returning(chat_sessions.c.id)
     )
 
@@ -104,10 +111,10 @@ def get_or_create_session(user_id: int, db, first_message=None):
 # MAIN CHAT PIPELINE
 # --------------------------------------------------
 
+
 async def process_message(message: str, user_id: int, db):
 
     try:
-
         # ------------------------------------------------
         # 1 Emotion Detection
         # ------------------------------------------------
@@ -140,7 +147,7 @@ async def process_message(message: str, user_id: int, db):
             "fear": 4,
             "sad": 3,
             "depressed": 2,
-            "anger": 3
+            "anger": 3,
         }
 
         mood_score = mood_map.get(emotion.lower(), 5)
@@ -170,7 +177,7 @@ async def process_message(message: str, user_id: int, db):
                 sender="user",
                 message_text=message,
                 emotion_label=emotion,
-                risk_level=risk
+                risk_level=risk,
             )
             .returning(messages.c.id)
         )
@@ -180,14 +187,14 @@ async def process_message(message: str, user_id: int, db):
         # ------------------------------------------------
         # 8 Save Mood Tracking
         # ------------------------------------------------
-        from app.db.models import mood_tracking
+        from backend.app.db.models import mood_tracking
 
         db.execute(
             insert(mood_tracking).values(
                 user_id=user_id,
                 mood_score=mood_score,
                 emotion_label=emotion,
-                notes=message
+                notes=message,
             )
         )
 
@@ -195,13 +202,12 @@ async def process_message(message: str, user_id: int, db):
         # 9 Save Alerts
         # ------------------------------------------------
         if risk in ["risk", "danger", "warning"]:
-
             db.execute(
                 insert(alerts).values(
                     user_id=user_id,
                     message_id=user_message_id,
                     risk_level=risk,
-                    trigger_text=message
+                    trigger_text=message,
                 )
             )
 
@@ -214,7 +220,7 @@ async def process_message(message: str, user_id: int, db):
                 sender="bot",
                 message_text=reply,
                 emotion_label="neutral",
-                risk_level="safe"
+                risk_level="safe",
             )
         )
 
@@ -225,7 +231,7 @@ async def process_message(message: str, user_id: int, db):
             "emotion": emotion,
             "risk": risk_data,
             "mood_score": mood_score,
-            "session_id": chat_session["id"]
+            "session_id": chat_session["id"],
         }
 
     except Exception:
@@ -236,5 +242,5 @@ async def process_message(message: str, user_id: int, db):
             "reply": "Sorry, something went wrong.",
             "emotion": "neutral",
             "risk": {"type": "safe", "score": 0},
-            "mood_score": 5
+            "mood_score": 5,
         }
