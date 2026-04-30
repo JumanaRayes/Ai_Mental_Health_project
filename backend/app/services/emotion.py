@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 
 # Add project root to path so AIModels can be resolved
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -10,6 +10,7 @@ from AIModels.emotion_detection import EmotionCascadeSystem
 
 cascade_system = None
 
+
 def get_emotion_system():
     global cascade_system
     if cascade_system is None:
@@ -17,6 +18,7 @@ def get_emotion_system():
         models_path = os.path.join(project_root, "AIModels", "emotion_models")
         cascade_system.load_models(base_path=models_path)
     return cascade_system
+
 
 def detect_emotion(text: str) -> str:
     system = get_emotion_system()

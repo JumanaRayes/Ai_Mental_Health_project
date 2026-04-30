@@ -1,14 +1,16 @@
 import os
-import re
 import pickle
+import re
+
 from textblob import TextBlob
 
 try:
     import tensorflow as tf
-    from tensorflow.keras.models import load_model
-    from tensorflow.keras.layers import Layer
     import tensorflow.keras.backend as K
+    from tensorflow.keras.layers import Layer
+    from tensorflow.keras.models import load_model
     from tensorflow.keras.preprocessing.sequence import pad_sequences
+
     TENSORFLOW_AVAILABLE = True
 except ImportError:
     TENSORFLOW_AVAILABLE = False
@@ -17,15 +19,17 @@ except ImportError:
 
 if TENSORFLOW_AVAILABLE:
     # Custom Attention Layer required to load the model
+
     @tf.keras.utils.register_keras_serializable()
-    class Attention(Layer):
+    class AttentionLayer(Layer):
         def build(self, input_shape):
-            self.W = self.add_weight(shape=(input_shape[-1], 1),
-                                     initializer='random_normal',
-                                     trainable=True)
-            self.b = self.add_weight(shape=(input_shape[1], 1),
-                                     initializer='zeros',
-                                     trainable=True)
+            self.W = self.add_weight(
+                shape=(input_shape[-1], 1), initializer="random_normal", trainable=True
+            )
+
+            self.b = self.add_weight(
+                shape=(input_shape[1], 1), initializer="zeros", trainable=True
+            )
 
         def call(self, x):
             e = K.tanh(K.dot(x, self.W) + self.b)
@@ -35,30 +39,47 @@ if TENSORFLOW_AVAILABLE:
 
         def get_config(self):
             return super().get_config()
-else:
-    class Attention:
-        pass
+
 
 # Paths relative to backend
-BASE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")
-)
+# BASE_DIR = os.path.abspath(
+#   os.path.join(os.path.dirname(__file__), "..", "..")
+# )
 
-MODEL_PATH = os.path.join(
-    BASE_DIR,
-    "AIModels",
-    "saved_models",
-    "risk",
-    "bi_gru_attention_risk_model.keras"
-)
+from pathlib import Path
 
-TOKENIZER_PATH = os.path.join(
-    BASE_DIR,
-    "AIModels",
-    "saved_models",
-    "risk",
-    "tokenizer.pkl"
+BASE_DIR = Path(__file__).resolve().parents[3]
+
+MODEL_PATH = (
+    BASE_DIR
+    / "AIModels"
+    / "saved_models"
+    / "risk"
+    / "bi_gru_attention_risk_model.keras"
 )
+TOKENIZER_PATH = BASE_DIR / "AIModels" / "saved_models" / "risk" / "tokenizer.pkl"
+
+# MODEL_PATH = os.path.join(
+# BASE_DIR,
+# "AIModels",
+# "saved_models",
+# "risk",
+# "bi_gru_attention_risk_model.keras"
+# )
+
+print("FILE LOCATION:", __file__)
+print("DIRNAME:", os.path.dirname(__file__))
+print("BASE_DIR:", BASE_DIR)
+print("MODEL_PATH:", MODEL_PATH)
+
+
+# TOKENIZER_PATH = os.path.join(
+# BASE_DIR,
+# "AIModels",
+# "saved_models",
+#  "risk",
+#   "tokenizer.pkl"
+# )
 
 MAX_LEN = 120
 
@@ -67,13 +88,18 @@ model = None
 tokenizer = None
 if TENSORFLOW_AVAILABLE:
     try:
-        model = load_model(MODEL_PATH, custom_objects={'Attention': Attention})
+        model = load_model(
+            str(MODEL_PATH), custom_objects={"AttentionLayer": AttentionLayer}
+        )
+
         with open(TOKENIZER_PATH, "rb") as f:
             tokenizer = pickle.load(f)
     except Exception as e:
         print(f"Warning: Could not load ML models correctly: {e}")
 else:
-    print("Warning: TensorFlow is not installed. Risk detection will use fallback keywords only.")
+    print(
+        "Warning: TensorFlow is not installed. Risk detection will use fallback keywords only."
+    )
 
 
 def preprocess_text(text):
@@ -89,15 +115,20 @@ def predict_risk(text):
         return "SAFE", 0.0
 
     high_risk_keywords = [
-        'suicid', 'kill myself', 'hopeless',
-        'overdose', 'depressed', 'self harm',
-        'cant go on', 'help'
+        "suicid",
+        "kill myself",
+        "hopeless",
+        "overdose",
+        "depressed",
+        "self harm",
+        "cant go on",
+        "help",
     ]
 
     text_clean = preprocess_text(text)
 
     seq = tokenizer.texts_to_sequences([text_clean])
-    pad = pad_sequences(seq, maxlen=MAX_LEN, padding='post')
+    pad = pad_sequences(seq, maxlen=MAX_LEN, padding="post")
 
     model_pred = model.predict(pad, verbose=0)[0][0]
 

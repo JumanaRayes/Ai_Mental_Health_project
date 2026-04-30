@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-from app.db.database import init_db
-from app.api import auth, chat, mood, alerts
+from backend.app.api import alerts, auth, chat, mood
+from backend.app.db.database import init_db
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -10,6 +12,13 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+ 
+ 
+@app.get("/")
+def root():
+    return {"message": "AI Mental Health API is running"}
+
+
 
 app.include_router(auth.router)
 app.include_router(chat.router)

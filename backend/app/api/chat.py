@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
-from app.db.database import get_db
-from app.db.models import chat_sessions, messages
-from app.utils.dependencies import get_current_user
-
-from app.schemas.chat_schema import ChatRequest
-from app.services.chatbot import process_message
+from backend.app.db.database import get_db
+from backend.app.db.models import chat_sessions, messages
+from backend.app.schemas.chat_schema import ChatRequest
+from backend.app.services.chatbot import process_message
+from backend.app.utils.dependencies import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 

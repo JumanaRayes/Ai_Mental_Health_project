@@ -1,8 +1,10 @@
 import os
+
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
-from app.db.models import metadata
+
+from backend.app.db.models import metadata
 
 load_dotenv()
 

@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class RiskRequest(BaseModel):
     text: str
 

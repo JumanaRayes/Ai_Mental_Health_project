@@ -1,18 +1,16 @@
 # app/services/chatbot.py
 
+import logging
 import os
 import sys
-import logging
 
-from sqlalchemy import select, insert
-
-from app.services.emotion import detect_emotion
-from app.services.risk import detect_risk
-from app.services.prompt_builder import build_prompt
+from sqlalchemy import insert, select
 
 # Core tables
-from app.db.models import messages, chat_sessions, alerts
-
+from backend.app.db.models import alerts, chat_sessions, messages
+from backend.app.services.emotion import detect_emotion
+from backend.app.services.prompt_builder import build_prompt
+from backend.app.services.risk import detect_risk
 
 logger = logging.getLogger(__name__)
 

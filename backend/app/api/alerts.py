@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
-from app.db.database import get_db
-from app.db.models import alerts
-from app.utils.dependencies import get_current_user
+from backend.app.db.database import get_db
+from backend.app.db.models import alerts
+from backend.app.utils.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/alerts",
