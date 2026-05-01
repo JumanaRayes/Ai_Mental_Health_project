@@ -1,12 +1,13 @@
 import os
 import sys
 
+from AIModels.emotion_detection import EmotionCascadeSystem
+
 # Add project root to path so AIModels can be resolved
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from AIModels.emotion_detection import EmotionCascadeSystem
 
 cascade_system = None
 

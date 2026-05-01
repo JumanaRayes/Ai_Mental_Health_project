@@ -11,16 +11,11 @@ from backend.app.db.models import alerts, chat_sessions, messages
 from backend.app.services.emotion import detect_emotion
 from backend.app.services.prompt_builder import build_prompt
 from backend.app.services.risk import detect_risk
-import tensorflow as tf
+
 
 logger = logging.getLogger(__name__)
 
 USE_LOCAL_MODEL = os.getenv("USE_LOCAL_MODEL", "false").lower() == "true"
-
-print(
-    "USE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODELUSE_LOCAL_MODEL",
-    USE_LOCAL_MODEL,
-)
 
 local_chatbot_instance = None
 
@@ -62,9 +57,28 @@ def load_local_model():
 # --------------------------------------------------
 # GENERATE REPLY
 # --------------------------------------------------
+import httpx
 
 
 async def generate_reply(prompt: str):
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "mistral",
+                    "prompt": f"<s>[INST] {prompt} [/INST]",
+                    "stream": False,
+                },
+            )
+        return res.json()["response"]
+
+    except Exception:
+        logger.exception("LLM call failed")
+        return "I'm here for you. Tell me more."
+
+
+async def generate_reply_(prompt: str):
     USE_LOCAL_MODEL = True
     try:
         if USE_LOCAL_MODEL:

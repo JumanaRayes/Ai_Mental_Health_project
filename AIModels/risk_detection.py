@@ -1,87 +1,88 @@
 import os
-import re
 import pickle
+import re
+
 import numpy as np
 import pandas as pd
-
-from sklearn.model_selection import train_test_split
-from sklearn.utils.class_weight import compute_class_weight
-from sklearn.metrics import (
-    classification_report,
-    f1_score,
-    roc_auc_score,
-    recall_score
-)
-
 import tensorflow as tf
 import tensorflow.keras.backend as K
-
-from tensorflow.keras.preprocessing.text import Tokenizer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-
-from tensorflow.keras.layers import (
-    Layer,
-    Input,
-    Embedding,
-    Bidirectional,
-    GRU,
-    Dense,
-    Dropout
-)
-
-from tensorflow.keras.models import Model
+from sklearn.metrics import classification_report, f1_score, recall_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import (
+    GRU,
+    Bidirectional,
+    Dense,
+    Dropout,
+    Embedding,
+    Input,
+    Layer,
+)
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.preprocessing.text import Tokenizer
 
 
 # =========================
 # ATTENTION LAYER
 # =========================
+import tensorflow.keras.backend as K
+from filepaths import BASE_DIR
+import sys
+import types
 
-class AttentionLayer(Layer):
+# Fake keras.src.legacy module to prevent crash
+if "keras.src.legacy" not in sys.modules:
+    legacy = types.ModuleType("keras.src.legacy")
+    sys.modules["keras.src.legacy"] = legacy
 
+
+@tf.keras.utils.register_keras_serializable()
+class AttentionLayer(tf.keras.layers.Layer):
     def build(self, input_shape):
         self.W = self.add_weight(
             shape=(input_shape[-1], 1),
             initializer="random_normal",
-            trainable=True
+            trainable=True,
+            name="W",
         )
 
         self.b = self.add_weight(
-            shape=(input_shape[1], 1),
-            initializer="zeros",
-            trainable=True
+            shape=(input_shape[1], 1), initializer="zeros", trainable=True, name="b"
         )
 
     def call(self, x):
-        e = K.tanh(K.dot(x, self.W) + self.b)
-        a = K.softmax(e, axis=1)
-        output = x * a
-        return K.sum(output, axis=1)
+        e = tf.nn.tanh(tf.linalg.matmul(x, self.W) + self.b)
+        a = tf.nn.softmax(e, axis=1)
+        return tf.reduce_sum(x * a, axis=1)
+
+    def get_config(self):
+        return super().get_config()
 
 
 # =========================
 # RISK SYSTEM
 # =========================
 
-class RiskDetectionSystem:
 
+class RiskDetectionSystem:
     def __init__(self):
 
-        self.path1 = "./Datasets/riskData/Reddit Dataset_cleaned.csv"
-        self.path2 = "./Datasets/riskData/mental_health_cleaned_final.csv"
+        self.path1 = BASE_DIR / "Datasets/riskData/Reddit Dataset_cleaned.csv"
+        self.path2 = BASE_DIR / "Datasets/riskData/mental_health_cleaned_final.csv"
 
         self.save_dir = "saved_models/risk"
 
         self.model_path = os.path.join(
-            self.save_dir,
-            "bi_gru_attention_risk_model.keras"
+            self.save_dir, "bi_gru_attention_risk_model.keras"
         )
 
-        self.tokenizer_path = os.path.join(
-            self.save_dir,
-            "tokenizer.pkl"
+        self.tokenizer_path = os.path.join(self.save_dir, "tokenizer.pkl")
+        print(
+            " self.tokenizer_path self.tokenizer_path self.tokenizer_path self.tokenizer_path",
+            self.tokenizer_path,
         )
-
         self.MAX_VOCAB = 20000
         self.MAX_LEN = 120
         self.BATCH = 32
@@ -121,7 +122,7 @@ class RiskDetectionSystem:
             "drug and alcohol",
             "personality",
             "trauma and stress",
-            "early life"
+            "early life",
         ]
 
         def map_label(x):
@@ -135,8 +136,7 @@ class RiskDetectionSystem:
         df1 = df1[["text", "label"]]
 
         df2["label"] = (
-            (df2["has_suicidal_keyword"] == 1) |
-            (df2["has_help_keyword"] == 1)
+            (df2["has_suicidal_keyword"] == 1) | (df2["has_help_keyword"] == 1)
         ).astype(int)
 
         df2 = df2[["text", "label"]]
@@ -154,10 +154,7 @@ class RiskDetectionSystem:
         df_major = self.df[self.df["label"] == 0]
         df_minor = self.df[self.df["label"] == 1]
 
-        df_major = df_major.sample(
-            n=len(df_minor) * 2,
-            random_state=42
-        )
+        df_major = df_major.sample(n=len(df_minor) * 2, random_state=42)
 
         self.df = pd.concat([df_major, df_minor])
 
@@ -177,13 +174,10 @@ class RiskDetectionSystem:
             self.df["label"],
             test_size=0.2,
             stratify=self.df["label"],
-            random_state=42
+            random_state=42,
         )
 
-        self.tokenizer = Tokenizer(
-            num_words=self.MAX_VOCAB,
-            oov_token="<OOV>"
-        )
+        self.tokenizer = Tokenizer(num_words=self.MAX_VOCAB, oov_token="<OOV>")
 
         self.tokenizer.fit_on_texts(X_train)
 
@@ -191,16 +185,10 @@ class RiskDetectionSystem:
         X_val_seq = self.tokenizer.texts_to_sequences(X_val)
 
         self.X_train_pad = pad_sequences(
-            X_train_seq,
-            maxlen=self.MAX_LEN,
-            padding="post"
+            X_train_seq, maxlen=self.MAX_LEN, padding="post"
         )
 
-        self.X_val_pad = pad_sequences(
-            X_val_seq,
-            maxlen=self.MAX_LEN,
-            padding="post"
-        )
+        self.X_val_pad = pad_sequences(X_val_seq, maxlen=self.MAX_LEN, padding="post")
 
         # 🔥 FIX: convert to numpy (THIS FIXES YOUR ERROR)
         self.y_train = np.array(y_train).astype(int)
@@ -230,9 +218,7 @@ class RiskDetectionSystem:
         self.model = Model(inputs, outputs)
 
         self.model.compile(
-            optimizer="adam",
-            loss="binary_crossentropy",
-            metrics=["accuracy"]
+            optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"]
         )
 
         print("Model built.")
@@ -243,17 +229,13 @@ class RiskDetectionSystem:
     def train(self):
 
         class_weights = compute_class_weight(
-            class_weight="balanced",
-            classes=np.array([0, 1]),
-            y=self.y_train
+            class_weight="balanced", classes=np.array([0, 1]), y=self.y_train
         )
 
         class_weights = {0: class_weights[0], 1: class_weights[1]}
 
         early_stop = EarlyStopping(
-            monitor="val_loss",
-            patience=2,
-            restore_best_weights=True
+            monitor="val_loss", patience=2, restore_best_weights=True
         )
 
         self.model.fit(
@@ -263,7 +245,7 @@ class RiskDetectionSystem:
             epochs=self.EPOCHS,
             batch_size=self.BATCH,
             class_weight=class_weights,
-            callbacks=[early_stop]
+            callbacks=[early_stop],
         )
 
     # =========================
@@ -282,11 +264,11 @@ class RiskDetectionSystem:
     # =========================
     # SAVE
     # =========================
-    def save(self):
 
+    def save(self):
         os.makedirs(self.save_dir, exist_ok=True)
 
-        self.model.save(self.model_path)
+        self.model.save(self.save_dir, save_format="tf")  # ✅ CHANGE THIS
 
         with open(self.tokenizer_path, "wb") as f:
             pickle.dump(self.tokenizer, f)
@@ -296,14 +278,20 @@ class RiskDetectionSystem:
     # =========================
     # LOAD
     # =========================
-    def load(self):
 
+    import tensorflow as tf
+
+    def load(self):
         with open(self.tokenizer_path, "rb") as f:
             self.tokenizer = pickle.load(f)
 
+        print("MODEL PATH:", self.model_path)
+
         self.model = tf.keras.models.load_model(
             self.model_path,
-            custom_objects={"AttentionLayer": AttentionLayer}
+            custom_objects={"AttentionLayer": AttentionLayer},
+            compile=False,
+            safe_mode=False,
         )
 
         print("Model loaded successfully.")
@@ -314,9 +302,14 @@ class RiskDetectionSystem:
     def predict(self, text):
 
         keywords = [
-            "suicid", "kill myself", "hopeless",
-            "overdose", "depressed", "self harm",
-            "cant go on", "help"
+            "suicid",
+            "kill myself",
+            "hopeless",
+            "overdose",
+            "depressed",
+            "self harm",
+            "cant go on",
+            "help",
         ]
 
         text = self.clean_text(text)
@@ -339,7 +332,6 @@ class RiskDetectionSystem:
 # MAIN
 # =========================
 if __name__ == "__main__":
-
     system = RiskDetectionSystem()
 
     system.load_data()

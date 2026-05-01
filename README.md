@@ -33,7 +33,7 @@ Install Dependencies:
 pip install -r requirements.txt
 
 Run Backend Server:
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload   -> changed to ##uvicorn backend.app.main:app --reload
 
 expected output For Example: 
 

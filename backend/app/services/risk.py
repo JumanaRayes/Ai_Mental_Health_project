@@ -1,9 +1,9 @@
-import os
 import pickle
 import re
 
 from textblob import TextBlob
 from AIModels.risk_detection import AttentionLayer
+from filepaths import TOKENIZER_PATH, MODEL_PATH
 
 try:
     import tensorflow as tf
@@ -17,26 +17,6 @@ except ImportError:
     TENSORFLOW_AVAILABLE = False
     tf = None
     Layer = object
-
-
-from pathlib import Path
-
-BASE_DIR = Path(__file__).resolve().parents[3]
-MODEL_PATH = BASE_DIR / "AIModels" / "saved_models" / "risk"
-# MODEL_PATH = (
-#  BASE_DIR
-# / "AIModels"
-# / "saved_models"
-# / "risk"
-# / "bi_gru_attention_risk_model.keras"
-# )
-TOKENIZER_PATH = BASE_DIR / "AIModels" / "saved_models" / "risk" / "tokenizer.pkl"
-
-
-print("FILE LOCATION:", __file__)
-print("DIRNAME:", os.path.dirname(__file__))
-print("BASE_DIR:", BASE_DIR)
-print("MODEL_PATH:", MODEL_PATH)
 
 
 MAX_LEN = 120
