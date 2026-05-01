@@ -1,6 +1,6 @@
 import os
 import pickle
-import re 
+import re
 
 import numpy as np
 import pandas as pd
@@ -56,7 +56,6 @@ class EmotionCascadeSystem:
 
         # Paths
         from pathlib import Path
-        
 
         BASE_DIR = Path(__file__).resolve().parent
         self.data_path = BASE_DIR / "Datasets/emotiondata/EmotionDataset.csv"
@@ -336,16 +335,17 @@ class EmotionCascadeSystem:
 
     # SAVE
 
+    def save(self):
+        os.makedirs("saved_models", exist_ok=True)
 
-def save(self):
-    os.makedirs("saved_models", exist_ok=True)
+        self.model_gate.save("emotion_models/gatekeeper.keras", save_format="keras")
+        self.model_emotion.save(
+            "emotion_models/emotion_expert.keras", save_format="keras"
+        )
+        self.model_noise.save("emotion_models/noise_expert.keras", save_format="keras")
 
-    self.model_gate.save("emotion_models/gatekeeper.keras", save_format="keras")
-    self.model_emotion.save("emotion_models/emotion_expert.keras", save_format="keras")
-    self.model_noise.save("emotion_models/noise_expert.keras", save_format="keras")
-
-    with open("emotion_models/tokenizer.pkl", "wb") as f:
-        pickle.dump(self.tokenizer, f)
+        with open("emotion_models/tokenizer.pkl", "wb") as f:
+            pickle.dump(self.tokenizer, f)
 
 
 # MAIN RUN
