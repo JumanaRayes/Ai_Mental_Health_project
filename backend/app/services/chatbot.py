@@ -11,7 +11,7 @@ from backend.app.db.models import alerts, chat_sessions, messages
 from backend.app.services.emotion import detect_emotion
 from backend.app.services.prompt_builder import build_prompt
 from backend.app.services.risk import detect_risk
-
+from backend.app.services.memory import get_short_term_memory
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +58,50 @@ def load_local_model():
 # GENERATE REPLY
 # --------------------------------------------------
 import httpx
-
+import asyncio
 
 async def generate_reply(prompt: str):
+    url = "http://localhost:11434/api/generate"
+
+    payload = {
+        "model": "mistral",  # or "mistral:instruct-q4_K_M"
+
+        # trim prompt for speed
+        "prompt": f"<s>[INST] {prompt[-1000:]} [/INST]",
+        "stream": False,
+    }
+
+    timeout = httpx.Timeout(
+        connect=10.0,
+        read=300.0,   # 🔥 important for slow CPU models
+        write=30.0,
+        pool=10.0
+    )
+
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(
-                "http://localhost:11434/api/generate",
-                json={
-                    "model": "mistral",
-                    "prompt": f"<s>[INST] {prompt} [/INST]",
-                    "stream": False,
-                },
-            )
-        return res.json()["response"]
+        async with httpx.AsyncClient(timeout=timeout) as client:
+
+            # retry logic
+            for attempt in range(3):
+                try:
+                    print(f"LLM request attempt {attempt+1}...")
+
+                    res = await asyncio.wait_for(
+                        client.post(url, json=payload),
+                        timeout=310  # slightly > read timeout
+                    )
+
+                    data = res.json()
+
+                    print("LLM responded ✅")
+
+                    return data.get("response", "I'm here for you.")
+
+                except asyncio.TimeoutError:
+                    print("Timeout, retrying...")
+                    continue
+
+        return "I'm here for you. Tell me more."
 
     except Exception:
         logger.exception("LLM call failed")
@@ -101,13 +131,19 @@ async def generate_reply_(prompt: str):
 
 def get_or_create_session(user_id: int, db, first_message=None):
 
+    # 1. Try to get latest session
     result = db.execute(
         select(chat_sessions)
         .where(chat_sessions.c.user_id == user_id)
         .order_by(chat_sessions.c.id.desc())
     ).first()
 
-    # optional: always create new session if desired
+    # 2. If session exists → reuse it
+    if result:
+        session_id = result.id
+        return {"id": session_id, "user_id": user_id}
+
+    # 3. If no session → create new one
     title = first_message[:40] if first_message else "New Chat"
 
     inserted = db.execute(
@@ -167,20 +203,23 @@ async def process_message(message: str, user_id: int, db):
         mood_score = mood_map.get(emotion.lower(), 5)
 
         # ------------------------------------------------
+        # 6 Session
+        # ------------------------------------------------
+        chat_session = get_or_create_session(user_id, db)
+        
+        # ================= MEMORY (SHORT-TERM) =================
+        history = get_short_term_memory(chat_session["id"], db, limit=8)
+        
+        # ------------------------------------------------
         # 4 Prompt Build
         # ------------------------------------------------
         prompt = build_prompt(message, emotion, risk)
-
+        
         # ------------------------------------------------
         # 5 Generate Reply
         # ------------------------------------------------
         reply = await generate_reply(prompt)
-
-        # ------------------------------------------------
-        # 6 Session
-        # ------------------------------------------------
-        chat_session = get_or_create_session(user_id, db)
-
+        
         # ------------------------------------------------
         # 7 Save User Message
         # ------------------------------------------------
