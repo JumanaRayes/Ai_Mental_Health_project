@@ -13,8 +13,10 @@ Offer a scalable backend API for integration with frontend applications
 System Architecture:
 Frontend (future integration): Chat interface for user interaction
 Backend: FastAPI REST API
+
 AI Models:
-chatbot Model (mistralai/Mistral-7B-Instruct-v0.2)
+
+chatbot Model (mistralai/Mistral-7B-Instruct-v0.2) using OLLAMA  locally.
 Emotion Detection Model (stacked or hirarichal Bi-LSTM + Attention layer model)
 Risk Detection Model (Bi-GRU / Attention-based model)
 NLP preprocessing pipeline
