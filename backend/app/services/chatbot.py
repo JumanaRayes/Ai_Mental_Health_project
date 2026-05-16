@@ -1,181 +1,276 @@
 # app/services/chatbot.py
 
 import logging
-import os
-import sys
+import asyncio
+import httpx
 
 from sqlalchemy import insert, select
 
-# Core tables
-from backend.app.db.models import alerts, chat_sessions, messages
+from backend.app.db.models import (
+    alerts,
+    chat_sessions,
+    messages,
+    mood_tracking,
+)
+
 from backend.app.services.emotion import detect_emotion
-from backend.app.services.prompt_builder import build_prompt
 from backend.app.services.risk import detect_risk
 from backend.app.services.memory import get_short_term_memory
 
 logger = logging.getLogger(__name__)
 
-USE_LOCAL_MODEL = os.getenv("USE_LOCAL_MODEL", "false").lower() == "true"
-
-local_chatbot_instance = None
+OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_MODEL = "mental-health-bot"
 
 
 # --------------------------------------------------
-# GPT FALLBACK
+# EMOTION NORMALIZATION
 # --------------------------------------------------
 
+EMOTION_MAP = {
+    "negative": "sad",
+    "positive": "happy",
+    "fearful": "anxious",
+    "angry": "anger",
+    "sad": "sad",
+    "happy": "happy",
+    "neutral": "neutral",
 
-async def get_gpt_response(prompt: str) -> str:
+    "stressed": "anxious",
+    "stress": "anxious",
+    "overwhelmed": "anxious",
+    "worried": "anxious"
+}
+
+
+def normalize_emotion(emotion: str) -> str:
+    if not emotion:
+        return "neutral"
+    return EMOTION_MAP.get(emotion.lower(), "neutral")
+
+
+# --------------------------------------------------
+# RISK OVERRIDE (SOFT + SAFE)
+# --------------------------------------------------
+
+def override_risk(message: str, risk_data: dict, score: float):
+
+    msg = message.lower()
+
+    anxiety_keywords = [
+        "worried", "anxious", "stress", "future",
+        "overwhelmed", "can’t cope", "cant cope",
+        "hopeless"
+    ]
+
+    if any(k in msg for k in anxiety_keywords):
+        score = min(score + 0.2, 1.0)
+
+    return {
+        "type": risk_data.get("type", "safe"),
+        "score": score
+    }
+
+
+# --------------------------------------------------
+# NORMALIZE HISTORY (FIXED SAFETY VERSION)
+# --------------------------------------------------
+
+def normalize_history(history):
+
+    normalized = []
+
+    for msg in history:
+
+        # string fallback
+        if isinstance(msg, str):
+            normalized.append({
+                "role": "user",
+                "content": msg
+            })
+            continue
+
+        # dict fallback
+        if isinstance(msg, dict):
+            normalized.append({
+                "role": msg.get("role", "user"),
+                "content": msg.get("content", "")
+            })
+            continue
+
+        # ORM object safe handling
+        sender = getattr(msg, "sender", "user")
+        content = getattr(msg, "message_text", "")
+
+        if sender not in ["user", "bot"]:
+            sender = "user"
+
+        role = "assistant" if sender == "bot" else "user"
+
+        normalized.append({
+            "role": role,
+            "content": content
+        })
+
+    return normalized
+
+
+# --------------------------------------------------
+# BUILD LLM MESSAGES
+# --------------------------------------------------
+
+def build_messages(history, current_message: str, emotion: str, risk: str):
+
+    system_prompt = {
+    "role": "system",
+    "content": f"""
+You are a mental health support assistant.
+
+STRICT BEHAVIOR RULES:
+- NEVER be overly positive or motivational
+- Do NOT say things like "you will be fine" or "I'm sure you'll do well"
+- Do NOT assume positive outcomes
+- Stay emotionally realistic and grounded
+
+STYLE:
+- Calm, supportive, emotionally accurate
+- Reflect stress and pressure properly
+- 2–4 sentences max
+
+USER CONTEXT:
+- Emotion: {emotion}
+- Risk: {risk}
+
+RESPONSE RULE:
+If the user is stressed:
+→ acknowledge pressure + normalize feeling + gentle question
+
+Example style:
+"I hear that this feels stressful, especially with something as important as a graduation project. What part of it feels most overwhelming right now?"
+"""
+}
+
+    messages = [system_prompt]
+    messages.extend(normalize_history(history))
+
+    messages.append({
+        "role": "user",
+        "content": current_message
+    })
+
+    return messages
+
+
+# --------------------------------------------------
+# LLM CALL (OLLAMA - STABLE)
+# --------------------------------------------------
+
+async def generate_reply(history, current_message, emotion, risk):
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": build_messages(history, current_message, emotion, risk),
+        "stream": False,
+    }
+
+    timeout = httpx.Timeout(60.0, connect=10.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+
+        for attempt in range(3):
+
+            try:
+                response = await client.post(
+                    OLLAMA_URL,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+
+                # 🔥 IMPORTANT: show real Ollama error if it fails
+                if response.status_code != 200:
+                    logger.error(
+                        f"Ollama error {response.status_code}: {response.text}"
+                    )
+                    continue
+
+                data = response.json()
+
+                # safe extraction
+                reply = (
+                    data.get("message", {})
+                        .get("content", "")
+                        .strip()
+                )
+
+                if reply:
+                    return reply
+
+                return "I'm here for you. Tell me more."
+
+            except httpx.TimeoutException:
+                logger.warning(f"LLM timeout attempt {attempt + 1}")
+
+            except httpx.RequestError as e:
+                logger.error(f"LLM request error attempt {attempt + 1}: {e}")
+
+            except Exception as e:
+                logger.error(f"LLM unexpected error attempt {attempt + 1}: {e}")
+
     return "I'm here for you. Tell me more."
 
 
 # --------------------------------------------------
-# LOAD LOCAL MODEL ONCE
+# SESSION HANDLING
 # --------------------------------------------------
-
-
-def load_local_model():
-    global local_chatbot_instance
-
-    if local_chatbot_instance:
-        return local_chatbot_instance
-
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-
-    if project_root not in sys.path:
-        sys.path.append(project_root)
-
-    from AIModels.chatbot import MistralChatbot
-
-    bot = MistralChatbot()
-    bot.load_model()
-
-    local_chatbot_instance = bot
-    return bot
-
-
-# --------------------------------------------------
-# GENERATE REPLY
-# --------------------------------------------------
-import httpx
-import asyncio
-
-async def generate_reply(prompt: str):
-    url = "http://localhost:11434/api/generate"
-
-    payload = {
-        "model": "mistral",  # or "mistral:instruct-q4_K_M"
-
-        # trim prompt for speed
-        "prompt": f"<s>[INST] {prompt[-1000:]} [/INST]",
-        "stream": False,
-    }
-
-    timeout = httpx.Timeout(
-        connect=10.0,
-        read=300.0,   # 🔥 important for slow CPU models
-        write=30.0,
-        pool=10.0
-    )
-
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-
-            # retry logic
-            for attempt in range(3):
-                try:
-                    print(f"LLM request attempt {attempt+1}...")
-
-                    res = await asyncio.wait_for(
-                        client.post(url, json=payload),
-                        timeout=310  # slightly > read timeout
-                    )
-
-                    data = res.json()
-
-                    print("LLM responded ✅")
-
-                    return data.get("response", "I'm here for you.")
-
-                except asyncio.TimeoutError:
-                    print("Timeout, retrying...")
-                    continue
-
-        return "I'm here for you. Tell me more."
-
-    except Exception:
-        logger.exception("LLM call failed")
-        return "I'm here for you. Tell me more."
-
-
-async def generate_reply_(prompt: str):
-    USE_LOCAL_MODEL = True
-    try:
-        if USE_LOCAL_MODEL:
-            print("::::::::::::::::::::::::::::::::::::::::::::::")
-            print(USE_LOCAL_MODEL)
-            model = load_local_model()
-            return model.generate_response(prompt)
-
-        return await get_gpt_response(prompt)
-
-    except Exception:
-        logger.exception("Reply generation failed")
-        return "I'm here for you. Tell me more."
-
-
-# --------------------------------------------------
-# GET OR CREATE SESSION
-# --------------------------------------------------
-
 
 def get_or_create_session(user_id: int, db, first_message=None):
 
-    # 1. Try to get latest session
-    result = db.execute(
+    session = db.execute(
         select(chat_sessions)
         .where(chat_sessions.c.user_id == user_id)
         .order_by(chat_sessions.c.id.desc())
     ).first()
 
-    # 2. If session exists → reuse it
-    if result:
-        session_id = result.id
-        return {"id": session_id, "user_id": user_id}
+    if session:
+        return {"id": session.id, "user_id": user_id}
 
-    # 3. If no session → create new one
-    title = first_message[:40] if first_message else "New Chat"
+    title = (first_message or "New Chat")[:40]
 
-    inserted = db.execute(
+    new_session = db.execute(
         insert(chat_sessions)
         .values(user_id=user_id, title=title)
         .returning(chat_sessions.c.id)
     )
 
-    session_id = inserted.scalar()
-
-    return {"id": session_id, "user_id": user_id}
+    return {
+        "id": new_session.scalar(),
+        "user_id": user_id
+    }
 
 
 # --------------------------------------------------
-# MAIN CHAT PIPELINE
+# MAIN PIPELINE
 # --------------------------------------------------
-
 
 async def process_message(message: str, user_id: int, db):
 
     try:
-        # ------------------------------------------------
-        # 1 Emotion Detection
-        # ------------------------------------------------
+
+        # -------------------------
+        # Emotion detection
+        # -------------------------
         try:
             emotion = detect_emotion(message)
+            emotion = normalize_emotion(emotion)
         except Exception:
             emotion = "neutral"
+            
+        if "stress" in message.lower() or "stressed" in message.lower():
+            emotion = "anxious"
 
-        # ------------------------------------------------
-        # 2 Risk Detection
-        # ------------------------------------------------
+        # -------------------------
+        # Risk detection
+        # -------------------------
         try:
             risk_data = detect_risk(message)
             risk = risk_data.get("type", "safe")
@@ -185,12 +280,15 @@ async def process_message(message: str, user_id: int, db):
             risk = "safe"
             risk_score = 0
 
-        # ------------------------------------------------
-        # 3 Mood Score Mapping
-        # ------------------------------------------------
+        risk_data = override_risk(message, risk_data, risk_score)
+        risk = risk_data["type"]
+        risk_score = float(risk_data["score"])
+
+        # -------------------------
+        # Mood scoring (FIXED)
+        # -------------------------
         mood_map = {
             "happy": 9,
-            "joy": 9,
             "calm": 8,
             "neutral": 6,
             "anxious": 4,
@@ -198,35 +296,38 @@ async def process_message(message: str, user_id: int, db):
             "sad": 3,
             "depressed": 2,
             "anger": 3,
+            "angry": 3,
+            "stressed": 4
         }
 
-        mood_score = mood_map.get(emotion.lower(), 5)
+        mood_score = mood_map.get(emotion, 5)
 
-        # ------------------------------------------------
-        # 6 Session
-        # ------------------------------------------------
-        chat_session = get_or_create_session(user_id, db)
-        
-        # ================= MEMORY (SHORT-TERM) =================
-        history = get_short_term_memory(chat_session["id"], db, limit=8)
-        
-        # ------------------------------------------------
-        # 4 Prompt Build
-        # ------------------------------------------------
-        prompt = build_prompt(message, emotion, risk)
-        
-        # ------------------------------------------------
-        # 5 Generate Reply
-        # ------------------------------------------------
-        reply = await generate_reply(prompt)
-        
-        # ------------------------------------------------
-        # 7 Save User Message
-        # ------------------------------------------------
-        user_msg_result = db.execute(
+        # -------------------------
+        # Session
+        # -------------------------
+        session = get_or_create_session(user_id, db, message)
+
+        # -------------------------
+        # Memory
+        # -------------------------
+        history = get_short_term_memory(
+            session["id"],
+            db,
+            limit=8
+        )
+
+        # -------------------------
+        # LLM response
+        # -------------------------
+        reply = await generate_reply(history, message, emotion, risk)
+
+        # -------------------------
+        # Save user message
+        # -------------------------
+        user_msg = db.execute(
             insert(messages)
             .values(
-                session_id=chat_session["id"],
+                session_id=session["id"],
                 sender="user",
                 message_text=message,
                 emotion_label=emotion,
@@ -235,13 +336,11 @@ async def process_message(message: str, user_id: int, db):
             .returning(messages.c.id)
         )
 
-        user_message_id = user_msg_result.scalar()
+        user_message_id = user_msg.scalar()
 
-        # ------------------------------------------------
-        # 8 Save Mood Tracking
-        # ------------------------------------------------
-        from backend.app.db.models import mood_tracking
-
+        # -------------------------
+        # Mood tracking
+        # -------------------------
         db.execute(
             insert(mood_tracking).values(
                 user_id=user_id,
@@ -251,10 +350,11 @@ async def process_message(message: str, user_id: int, db):
             )
         )
 
-        # ------------------------------------------------
-        # 9 Save Alerts
-        # ------------------------------------------------
-        if risk in ["risk", "danger", "warning"]:
+        # -------------------------
+        # Alerts
+        # -------------------------
+        if risk in ["high", "danger", "critical"] or risk_score > 0.7:
+
             db.execute(
                 insert(alerts).values(
                     user_id=user_id,
@@ -264,12 +364,12 @@ async def process_message(message: str, user_id: int, db):
                 )
             )
 
-        # ------------------------------------------------
-        # 10 Save Bot Reply
-        # ------------------------------------------------
+        # -------------------------
+        # Save bot reply
+        # -------------------------
         db.execute(
             insert(messages).values(
-                session_id=chat_session["id"],
+                session_id=session["id"],
                 sender="bot",
                 message_text=reply,
                 emotion_label="neutral",
@@ -284,7 +384,7 @@ async def process_message(message: str, user_id: int, db):
             "emotion": emotion,
             "risk": risk_data,
             "mood_score": mood_score,
-            "session_id": chat_session["id"],
+            "session_id": session["id"],
         }
 
     except Exception:
