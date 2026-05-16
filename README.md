@@ -1,20 +1,20 @@
-Project Overview:
+#Project Overview:
 
 This project is an AI-powered Mental Health Support System designed to assist users by analyzing text inputs, detecting emotional states, and identifying potential psychological risk levels. It provides intelligent conversational support using a chatbot integrated with deep learning models.
 The system aims to support early detection of emotional distress and provide a safe, responsive AI assistant for mental health awareness and guidance.
 
-Objectives:
+#Objectives:
 Detect user emotions from text using deep learning models
 Identify potential mental health risk levels
 Provide empathetic AI chatbot responses
 Store chat sessions for mood tracking and analysis
 Offer a scalable backend API for integration with frontend applications
 
-System Architecture:
+#System Architecture:
 Frontend (future integration): Chat interface for user interaction
 Backend: FastAPI REST API
 
-AI Models:
+#AI Models:
 
 chatbot Model (mistralai/Mistral-7B-Instruct-v0.2) using OLLAMA  locally.
 Emotion Detection Model (stacked or hirarichal Bi-LSTM + Attention layer model)
@@ -23,11 +23,11 @@ NLP preprocessing pipeline
 Database using Supabase:  Stores chat sessions and user interaction history
 Model Storage: Git LFS for large .keras files
 
-How to Run the Project:
+#How to Run the Project:
 git clone https://github.com/JumanaRayes/Ai_Mental_Health_project.git
 cd Ai_Mental_Health_project
 
-Create Virtual Environment:
+#Create Virtual Environment:
 python -m venv venv
 source venv/Scripts/activate   # Windows
 
@@ -46,10 +46,10 @@ expected output For Example:
 }
 
 
-GloVe Embeddings Setup:
+#GloVe Embeddings Setup:
 This project uses pre-trained GloVe word embeddings to improve NLP understanding and semantic representation of text.
 
-Download GloVe:
+#Download GloVe:
 
 GloVe is not installed via pip. It must be downloaded manually from Stanford:
 https://nlp.stanford.edu/projects/glove/
@@ -57,6 +57,15 @@ Download:
 
 glove.6B.zip (recommended) Then extract:  glove.6B.300d.txt 
 
-Project Placement
+#Project Placement
 After downloading, place the file in:
 AIModels/gloveEmbed/glove.6B.300d.txt
+
+
+#Add a folder inside AIModels/ named llm/
+  and inside it clone the repository from hugging face: https://huggingface.co/jumanaRayes/mistral-mental-health-v1/tree/main 
+  using this command--> git clone https://huggingface.co/jumanaRayes/mistral-mental-health-v1
+  
+  and then create model inside ollama, called mental-health-bot with this command --> ollama create mental-health-bot -f Modelfile
+  and then after that do this --> ollama run mental-health-bot , to check if the model is working inside the terminal. 
+  already it is connected in the services/chatbot.py. 
