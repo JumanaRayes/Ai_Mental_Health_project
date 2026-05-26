@@ -3,6 +3,7 @@
 import logging
 import asyncio
 import httpx
+import re 
 
 from sqlalchemy import insert, select
 
@@ -20,7 +21,7 @@ from backend.app.services.memory import get_short_term_memory
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "mental-health-bot"
+OLLAMA_MODEL = "mistral-local"
 
 
 # --------------------------------------------------
@@ -50,12 +51,33 @@ def normalize_emotion(emotion: str) -> str:
 
 
 # --------------------------------------------------
-# RISK OVERRIDE (SOFT + SAFE)
+# REGEX HELPER FOR STRICT MATCHING
+# --------------------------------------------------
+
+def contains_whole_word(keywords: list, text: str) -> bool:
+    """
+    Ensures substrings do not cause false positives.
+    e.g., 'end' will no longer match inside 'excited'.
+    """
+    if not keywords:
+        return False
+    pattern = r'\b(' + '|'.join(map(re.escape, keywords)) + r')\b'
+    return bool(re.search(pattern, text))
+
+
+# --------------------------------------------------
+# RISK OVERRIDE (HARD GUARDRAILS FOR CRISIS)
 # --------------------------------------------------
 
 def override_risk(message: str, risk_data: dict, score: float):
-
     msg = message.lower()
+
+    # 🚨 CRITICAL: Explicit crisis strings
+    crisis_keywords = [
+        "end everything", "hurt myself", "commit suicide", "kill myself", 
+        "ending my life", "want to die", "bottle of pills", "ending seems like",
+        "suicidal", "self-harm", "end it all", "end this"
+    ]
 
     anxiety_keywords = [
         "worried", "anxious", "stress", "future",
@@ -63,7 +85,15 @@ def override_risk(message: str, risk_data: dict, score: float):
         "hopeless"
     ]
 
-    if any(k in msg for k in anxiety_keywords):
+    # Use regex safety match to force high risk status
+    if contains_whole_word(crisis_keywords, msg):
+        return {
+            "type": "high",
+            "score": 1.0
+        }
+
+    # Soft bump for anxiety indicators
+    if contains_whole_word(anxiety_keywords, msg):
         score = min(score + 0.2, 1.0)
 
     return {
@@ -115,39 +145,53 @@ def normalize_history(history):
     return normalized
 
 
-# --------------------------------------------------
 # BUILD LLM MESSAGES
-# --------------------------------------------------
 
 def build_messages(history, current_message: str, emotion: str, risk: str):
 
     system_prompt = {
     "role": "system",
     "content": f"""
-You are a mental health support assistant.
+    You are a mental health support assistant.
 
-STRICT BEHAVIOR RULES:
-- NEVER be overly positive or motivational
-- Do NOT say things like "you will be fine" or "I'm sure you'll do well"
-- Do NOT assume positive outcomes
-- Stay emotionally realistic and grounded
+    STRICT RULES:
+    - NEVER sound robotic
+    - NEVER ignore the user's emotional context
+    - NEVER give generic therapist questions
+    - NEVER suddenly change the topic
+    - NEVER be overly optimistic
 
-STYLE:
-- Calm, supportive, emotionally accurate
-- Reflect stress and pressure properly
-- 2–4 sentences max
+    RESPONSE STYLE:
+    - Emotionally validating
+    - Natural and human
+    - Short (2-4 sentences)
+    - Supportive but realistic
 
-USER CONTEXT:
-- Emotion: {emotion}
-- Risk: {risk}
+    IMPORTANT:
+    If the user expresses:
+    - exhaustion
+    - exam stress
+    - burnout
+    - pressure
+    - frustration
 
-RESPONSE RULE:
-If the user is stressed:
-→ acknowledge pressure + normalize feeling + gentle question
+    Then:
+    1. acknowledge the exhaustion directly
+    2. reflect the emotional pressure
+    3. ask a gentle follow-up question
 
-Example style:
-"I hear that this feels stressful, especially with something as important as a graduation project. What part of it feels most overwhelming right now?"
-"""
+    GOOD RESPONSE EXAMPLE:
+    "That sounds really exhausting. Studying for exams for long periods can drain a lot of energy, especially when you're eager to graduate. What part has been the most overwhelming lately?"
+
+    BAD RESPONSE EXAMPLES:
+    - "How are you feeling about school?"
+    - "Everything will be okay."
+    - "Stay positive."
+
+    USER CONTEXT:
+    Emotion: {emotion}
+    Risk: {risk}
+    """
 }
 
     messages = [system_prompt]
@@ -186,7 +230,6 @@ async def generate_reply(history, current_message, emotion, risk):
                     headers={"Content-Type": "application/json"}
                 )
 
-                # 🔥 IMPORTANT: show real Ollama error if it fails
                 if response.status_code != 200:
                     logger.error(
                         f"Ollama error {response.status_code}: {response.text}"
@@ -195,7 +238,6 @@ async def generate_reply(history, current_message, emotion, risk):
 
                 data = response.json()
 
-                # safe extraction
                 reply = (
                     data.get("message", {})
                         .get("content", "")
@@ -264,9 +306,59 @@ async def process_message(message: str, user_id: int, db):
             emotion = normalize_emotion(emotion)
         except Exception:
             emotion = "neutral"
+
+        # --------------------------------------------------
+        # CONTEXTUAL EMOTION OVERRIDE (FIXED VIA REGEX)
+        # --------------------------------------------------
+
+        msg = message.lower()
+
+        crisis_keywords = [
+            "end everything", "hurt myself", "commit suicide", "kill myself", 
+            "want to die", "ending seems like", "suicidal", "end this"
+        ]
+
+        stress_keywords = [
+            "stress", "stressed", "overwhelmed",
+            "tired", "exhausted", "burned out",
+            "too much studying", "can't study",
+            "cant study", "finals", "exams",
+            "want to graduate", "graduation pressure",
+            "drained"
+        ]
+
+        sad_keywords = [
+            "lonely", "empty", "sad",
+            "depressed", "hopeless",
+            "crying", "hurt"
+        ]
+
+        anger_keywords = [
+            "angry", "mad", "furious",
+            "annoyed", "irritated"
+        ]
+
+        happy_keywords = [
+            "excited", "grateful",
+            "happy", "great",
+            "amazing"
+        ]
+
+        # Priority-based whole word override check
+        if contains_whole_word(crisis_keywords, msg):
+            emotion = "sad"
             
-        if "stress" in message.lower() or "stressed" in message.lower():
+        elif contains_whole_word(stress_keywords, msg):
             emotion = "anxious"
+
+        elif contains_whole_word(sad_keywords, msg):
+            emotion = "sad"
+
+        elif contains_whole_word(anger_keywords, msg):
+            emotion = "anger"
+
+        elif contains_whole_word(happy_keywords, msg):
+            emotion = "happy"
 
         # -------------------------
         # Risk detection
@@ -275,29 +367,33 @@ async def process_message(message: str, user_id: int, db):
             risk_data = detect_risk(message)
             risk = risk_data.get("type", "safe")
             risk_score = float(risk_data.get("score", 0))
+
         except Exception:
             risk_data = {"type": "safe", "score": 0}
             risk = "safe"
             risk_score = 0
 
+        # Pass through our fixed whole-word safety function
         risk_data = override_risk(message, risk_data, risk_score)
+
         risk = risk_data["type"]
         risk_score = float(risk_data["score"])
 
         # -------------------------
-        # Mood scoring (FIXED)
+        # Mood scoring
         # -------------------------
+
         mood_map = {
-            "happy": 9,
-            "calm": 8,
-            "neutral": 6,
-            "anxious": 4,
-            "fear": 4,
-            "sad": 3,
-            "depressed": 2,
-            "anger": 3,
-            "angry": 3,
-            "stressed": 4
+            "happy": 8,
+            "calm": 7,
+            "neutral": 5,
+            "anxious": 3,
+            "fear": 3,
+            "sad": 2,
+            "depressed": 1,
+            "anger": 2,
+            "angry": 2,
+            "stressed": 3
         }
 
         mood_score = mood_map.get(emotion, 5)
@@ -305,11 +401,17 @@ async def process_message(message: str, user_id: int, db):
         # -------------------------
         # Session
         # -------------------------
-        session = get_or_create_session(user_id, db, message)
+
+        session = get_or_create_session(
+            user_id,
+            db,
+            message
+        )
 
         # -------------------------
         # Memory
         # -------------------------
+
         history = get_short_term_memory(
             session["id"],
             db,
@@ -319,12 +421,19 @@ async def process_message(message: str, user_id: int, db):
         # -------------------------
         # LLM response
         # -------------------------
-        reply = await generate_reply(history, message, emotion, risk)
+
+        reply = await generate_reply(
+            history,
+            message,
+            emotion,
+            risk
+        )
 
         # -------------------------
         # Save user message
         # -------------------------
-        user_msg = db.execute(
+
+        db.execute(
             insert(messages)
             .values(
                 session_id=session["id"],
@@ -333,14 +442,15 @@ async def process_message(message: str, user_id: int, db):
                 emotion_label=emotion,
                 risk_level=risk,
             )
-            .returning(messages.c.id)
         )
 
-        user_message_id = user_msg.scalar()
+        # Re-fetch or generate sequence tracking if message ID is mandatory elsewhere
+        user_message_id = None 
 
         # -------------------------
         # Mood tracking
         # -------------------------
+
         db.execute(
             insert(mood_tracking).values(
                 user_id=user_id,
@@ -353,12 +463,13 @@ async def process_message(message: str, user_id: int, db):
         # -------------------------
         # Alerts
         # -------------------------
+
         if risk in ["high", "danger", "critical"] or risk_score > 0.7:
 
             db.execute(
                 insert(alerts).values(
                     user_id=user_id,
-                    message_id=user_message_id,
+                    message_id=user_message_id,  # Will write null safely if sequence is automatic
                     risk_level=risk,
                     trigger_text=message,
                 )
@@ -367,6 +478,7 @@ async def process_message(message: str, user_id: int, db):
         # -------------------------
         # Save bot reply
         # -------------------------
+
         db.execute(
             insert(messages).values(
                 session_id=session["id"],
@@ -388,12 +500,17 @@ async def process_message(message: str, user_id: int, db):
         }
 
     except Exception:
+
         db.rollback()
+
         logger.exception("Chat processing failed")
 
         return {
             "reply": "Sorry, something went wrong.",
             "emotion": "neutral",
-            "risk": {"type": "safe", "score": 0},
+            "risk": {
+                "type": "safe",
+                "score": 0
+            },
             "mood_score": 5,
         }
